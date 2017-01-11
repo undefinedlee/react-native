@@ -64,6 +64,9 @@ class MessageQueue {
 
   __spy: ?(data: SpyData) => void;
 
+  _runApplicationRunning: Object;
+  _runApplicationWaiting: Object;
+
   constructor() {
     this._callableModules = {};
     this._queue = [[], [], [], 0];
@@ -78,6 +81,9 @@ class MessageQueue {
       this._remoteModuleTable = {};
       this._remoteMethodTable = {};
     }
+    
+    this._runApplicationRunning = {};
+    this._runApplicationWaiting = {};
 
     (this:any).callFunctionReturnFlushedQueue = this.callFunctionReturnFlushedQueue.bind(this);
     (this:any).callFunctionReturnResultAndFlushedQueue = this.callFunctionReturnResultAndFlushedQueue.bind(this);
@@ -103,11 +109,32 @@ class MessageQueue {
     }
   }
 
+  _callFunctionReturnFlushedQueue(module: string, method: string, args: Array<any>) {
+      guard(() => {
+        this.__callFunction(module, method, args);
+        this.__callImmediates();
+      });
+  }
+
   callFunctionReturnFlushedQueue(module: string, method: string, args: Array<any>) {
-    guard(() => {
-      this.__callFunction(module, method, args);
-      this.__callImmediates();
-    });
+    if("AppRegistry.runApplication" === [module, method].join(".")){
+      let rootTag = args[1].rootTag;
+      if(this._runApplicationRunning[rootTag]){
+        this._runApplicationWaiting[rootTag] = [module, method, args];
+      }else{
+        this._runApplicationRunning[rootTag] = true;
+        setTimeout(() => {
+          this._callFunctionReturnFlushedQueue(module, method, args);
+          if(this._runApplicationWaiting[rootTag]){
+            this._callFunctionReturnFlushedQueue.apply(this, this._runApplicationWaiting[rootTag]);
+            delete this._runApplicationWaiting[rootTag];
+          }
+          this._runApplicationRunning[rootTag] = false;
+        }, 0);
+      }
+    }else{
+      this._callFunctionReturnFlushedQueue(module, method, args);
+    }
 
     return this.flushedQueue();
   }
